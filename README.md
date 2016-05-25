@@ -8,11 +8,12 @@ certificate against the fingerprints of the new certs.
 
 To install, put this script into your /usr/bin directory (or any
 execyutable place in your PATH), then make it executable:
-  chmod +x /usr/bin/ssl-add2bundle
+
+    chmod +x /usr/bin/ssl-add2bundle
 
 To use:
 
-  ssl-add2bundle /etc/ssl/certs/ca-certificates.crt new-cert-1.pem new-cert-2.pem...
+    ssl-add2bundle /etc/ssl/certs/ca-certificates.crt new-cert-1.pem new-cert-2.pem...
 
 Licensed under the MIT License.
 
