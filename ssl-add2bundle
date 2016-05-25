@@ -1,0 +1,117 @@
+#!/usr/bin/perl -w
+# Utility to add certificates to a bundle, if they're not already added
+#
+# MIT License
+# 
+# Copyright (c) 2016 by Uncle Spook
+# See https://github.com/spook/ssl-add2bundle
+# 
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+# 
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+# 
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+#
+
+use strict;
+use v5.10.0;
+use POSIX qw/strftime/;
+$| = 1;
+
+die "*** Usage:  $0 bundle-file.crt [new-cert-1 new-cert-2...]\n"
+    if @ARGV < 1;
+add_bundle(@ARGV);
+exit 0;
+
+# First param: bundle file name
+# Other params: new cert files
+# Returns the number of new certs added to the bundle
+# Dies on error.
+sub add_bundle {
+
+    # Inhale the bundle
+    my $bfile = shift;
+    open BF, $bfile
+        or die "*** Cannot access bundle file $bfile : $!\n";
+    say "Bundle file: $bfile";
+    my $b = do {local $/ = <BF>};
+    close BF;
+    my @certs = split /(?<=-----END\sCERTIFICATE-----)
+                       .+?
+                       (?=-----BEGIN\sCERTIFICATE-----)/xsm, $b;
+    say "Bundle contains " . (0 + @certs) . " certificates";
+
+    # Get existing fingerprints
+    print "Checking certs in bundle... ";
+    my $i     = 0;
+    my %fps   = ();
+    my $cfile = "/tmp/cert-$$.tmp";
+    foreach my $cert (@certs) {
+        printf "%4.4d\b\b\b\b", ++$i;
+        open CF, '>', $cfile
+            or die "*** Cannot write temp file $cfile: $!\n";
+        print CF $cert;
+        close CF;
+        my $fp = qx{openssl x509 -noout -fingerprint -in '$cfile'};
+        $fp =~ s/^.+?=//;          # trim front
+        $fp =~ s/[^0-9a-f]//ig;    # keep only hex
+        $fps{$fp} = $cert;
+        unlink $cfile;
+    }
+    say "Done";
+
+    # Check new certs
+    my $nnew = 0;
+    foreach my $newfile (@_) {
+        print "Checking certificate $newfile ... ";
+        my $fp = qx{openssl x509 -noout -fingerprint -in '$newfile' 2>&1};
+        if ($?) {
+            print "ERROR\n*** Cannot process certificate $newfile\n    ";
+            say join("\n    ", split(/\n/, $fp));
+            next;
+        }
+        $fp =~ s/^.+?=//;          # trim front
+        $fp =~ s/[^0-9a-f]//ig;    # keep only hex
+        if (exists $fps{$fp}) {
+            say "Exists";
+            next;
+        }
+        ++$nnew;
+        say "New";
+
+        # It's new, add it
+        open CF, '<', $newfile
+            or die "*** Cannot read cert file $newfile: $!\n";
+        my $cert = do {local $/ = <CF>};
+        close CF;
+        $fps{$fp} = $cert;
+    }
+    say "$nnew new certificates to add";
+    return 0 if !$nnew;
+
+    # Save the old bundle file
+    rename $bfile, "$bfile." . strftime('%Y-%m-%dT%H:%M:%SZ', gmtime(time()));
+
+    # Write new bundle file
+    open NB, '>', $bfile
+        or die "*** Cannot write new bundle $bfile : $!\n";
+    foreach my $cert (values %fps) {
+        say NB $cert;
+    }
+    say "Wrote " . (0 + keys(%fps)) . " certificates to bundle $bfile";
+    close NB;
+    return $nnew;
+}
+
