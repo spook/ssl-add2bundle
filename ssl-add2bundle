@@ -59,7 +59,7 @@ sub add_bundle {
 
     my $num_certs = (0 + @certs);
     @certs = uniq(@certs);
-    print "Bundle contains $num_certs certificates";
+    print "Bundle contains " . (0 + @certs) . " certificates";
 
     my $num_dup = ($num_certs - @certs);
     print " (excluding $num_dup duplicates)"
