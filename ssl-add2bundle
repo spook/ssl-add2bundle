@@ -35,6 +35,11 @@ die "*** Usage:  $0 bundle-file.crt [new-cert-1 new-cert-2...]\n"
 add_bundle(@ARGV);
 exit 0;
 
+sub uniq {
+    my %seen;
+    grep !$seen{$_}++, @_;
+}
+
 # First param: bundle file name
 # Other params: new cert files
 # Returns the number of new certs added to the bundle
@@ -51,10 +56,15 @@ sub add_bundle {
     my @certs = split /(?<=-----END\sCERTIFICATE-----)
                        .+?
                        (?=-----BEGIN\sCERTIFICATE-----)/xsm, $b;
-    say "Bundle contains " . (0 + @certs) . " certificates";
+
+    my $num_certs = (0 + @certs);
+    @certs = uniq(@certs);
+    print "Bundle contains $num_certs certificates";
+    print " (excluding " . ($num_certs - @certs) . " duplicates)"
+        if (($num_certs - @certs) > 0);
 
     # Get existing fingerprints
-    print "Checking certs in bundle... ";
+    print "\nChecking certs in bundle... ";
     my $i     = 0;
     my %fps   = ();
     my $cfile = "/tmp/cert-$$.tmp";
