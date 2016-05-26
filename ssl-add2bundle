@@ -60,8 +60,10 @@ sub add_bundle {
     my $num_certs = (0 + @certs);
     @certs = uniq(@certs);
     print "Bundle contains $num_certs certificates";
-    print " (excluding " . ($num_certs - @certs) . " duplicates)"
-        if (($num_certs - @certs) > 0);
+
+    my $num_dup = ($num_certs - @certs);
+    print " (excluding $num_dup duplicates)"
+        if ($num_dup);
 
     # Get existing fingerprints
     print "\nChecking certs in bundle... ";
