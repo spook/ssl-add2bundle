@@ -101,7 +101,7 @@ sub add_bundle {
     my $do_body = $opts->{text};
     my $rewrite = $do_sort || $do_body || $do_head;
 
-    # Inhale the bundle and nay new certificates
+    # Inhale the bundle and any new certificates
     my $b     = q{};
     my $bfile = $ROOT . $_[0];
     putinfo "Loading certificates... ";
@@ -118,15 +118,15 @@ sub add_bundle {
 
     # Split into unique certs
     #<<<
-    my $nfound = 0;
-    my %certs = map {$nfound++; $_ => {subj => q{}}} $b =~ m/(^-----BEGIN\sCERTIFICATE-----.*?$
-                                                              .+?
-                                                              ^-----END\sCERTIFICATE-----
-                                                             )/xsmg;
+    my $nloaded = 0;
+    my %certs = map {$nloaded++; $_ => {subj => q{}}} $b =~ m/(^-----BEGIN\sCERTIFICATE-----.*?$
+                                                               .+?
+                                                               ^-----END\sCERTIFICATE-----
+                                                              )/xsmg;
     #>>>
     my $nuniq = keys %certs;
-    $rewrite ||= $nuniq != $nfound;
-    putinfo "Found $nuniq unique certificates of $nfound loaded\n";
+    $rewrite ||= $nuniq != $nloaded;
+    putinfo "Found $nuniq unique certificates of $nloaded loaded\n";
 
     # Get fingerprint, heading, or body text for certs if requested
     my %fps = ();
@@ -254,9 +254,10 @@ the bundle in a text editor.
 For a more exacting check of matching certificates, use
 the --fingerprint option.  This compares the SHA1 digest
 of the DER-encoded form of the certificates.  This is the
-slower option; the default is to simply compare the PEM
-formats -- as strings -- of the certificates as given in the file.
-The default may miss some duplicates; to be certain use --fingerprint.
+slower option; the default compares the PEM formats of the
+certificates as strings, as given in the file.
+This default may miss some duplicates; to be certain use 
+the slower --fingerprint method.
 
 The bundle file is rewritten when new unique certificates
 are added or duplicates or bad certs are removed, or if the
@@ -269,8 +270,14 @@ The --verbose option prints more informational messages about
 what this utility is doing; the --quiet option suppresses all
 messages.  --verbose overrides --quiet.
 
+Caution: If your bundle is used as a certificate chain,
+this utility does not preserve the order of the certs.
+In fact, it may sort them by subject.  For a cert chain,
+this can cause problems for some older 'evil' web browsers.
+We hope no one is still using those browsers, but ... we 
+warned ye!
+
 By the way... the NEWCERTS can also be bundle files.
 This utility is basically a certificate merging tool.
-
 
 =cut
