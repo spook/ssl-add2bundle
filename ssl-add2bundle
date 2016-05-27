@@ -1,21 +1,21 @@
 #!/usr/bin/perl -w
-# Utility to add certificates to a bundle, if they're not already added
 #
+# Utility to add certificates to a bundle, if they're not already added
 # MIT License
-# 
+#
 # Copyright (c) 2016 by Uncle Spook
 # See https://github.com/spook/ssl-add2bundle
-# 
+#
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
 # in the Software without restriction, including without limitation the rights
 # to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 # copies of the Software, and to permit persons to whom the Software is
 # furnished to do so, subject to the following conditions:
-# 
+#
 # The above copyright notice and this permission notice shall be included in all
 # copies or substantial portions of the Software.
-# 
+#
 # THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 # IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 # FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -26,92 +26,244 @@
 #
 
 use strict;
-use v5.10.0;
+use Getopt::Long;
+use Pod::Usage;
 use POSIX qw/strftime/;
+
+use constant P_QUIET   => 0;
+use constant P_NORMAL  => 1;
+use constant P_VERBOSE => 2;
+
 $| = 1;
 
-die "*** Usage:  $0 bundle-file.crt [new-cert-1 new-cert-2...]\n"
-    if @ARGV < 1;
-add_bundle(@ARGV);
+# Parse the command line options
+#<<< suppress pertidy
+my $opts = {};
+Getopt::Long::Configure("bundling");
+my $optok = GetOptions($opts,
+    "fingerprint|g",    # -g 'cuz -f is defacto for 'force'
+    "help|h",
+    "quiet|q",
+    "root|R=s",
+    "sort|s",
+    "text|x",
+    "title|t",
+    "verbose|v",
+);
+#>>>
+pod2usage(
+    -verbose => 0,
+    -exitval => 22,
+    -message => "*** Invalid option or bad syntax\n"
+) if !$optok;
+pod2usage(
+    -verbose => 0,
+    -exitval => 1,
+    -message => "*** Missing bundle file name\n"
+) if !@ARGV;
+pod2usage(-verbose => 1, -exitval => 0)
+    if $opts->{help};
+my $ROOT = $opts->{root} || q{};
+$ROOT =~ s{(?<!/)$}{/} if $ROOT;    # If root given, make sure it ends with a slash
+my $PLEVEL
+    = $opts->{verbose} ? P_VERBOSE
+    : $opts->{quiet}   ? P_QUIET
+    :                    P_NORMAL;
+
+# Do it
+my $err = add_bundle($opts, @ARGV);
+die "\n*** $err\n" if $err;
 exit 0;
 
-# First param: bundle file name
-# Other params: new cert files
-# Returns the number of new certs added to the bundle
-# Dies on error.
+# Output routines, enabled by the quiet-normal-verbose level
+sub putinfo {print @_ if $PLEVEL >= P_NORMAL}
+sub putloud {print @_ if $PLEVEL >= P_VERBOSE}
+
+# Bundle checker and adder
+#   Supply an options hashref as the first arg,
+#     if wanted (options are optional ;-) )
+#   Next give the bundle file name (required)
+#   then list any new cert files to add (optional).
+#   Returns the error if any, else false -- the empty string -- on success.
+#   Example:
+#       my $err = add_bundle({title => 1}, $bundle_file, @new_files);
+#
 sub add_bundle {
 
-    # Inhale the bundle
-    my $bfile = shift;
-    open BF, $bfile
-        or die "*** Cannot access bundle file $bfile : $!\n";
-    say "Bundle file: $bfile";
-    my $b = do {local $/ = <BF>};
-    close BF;
-    my @certs = split /(?<=-----END\sCERTIFICATE-----)
-                       .+?
-                       (?=-----BEGIN\sCERTIFICATE-----)/xsm, $b;
-    say "Bundle contains " . (0 + @certs) . " certificates";
+    # Options
+    my $opts    = @_ && ref $_[0] ? shift : {};
+    my $do_hash = $opts->{fingerprint};
+    my $do_sort = $opts->{'sort'};                    # sort is a function so quote it
+    my $do_head = $opts->{title};
+    my $do_body = $opts->{text};
+    my $rewrite = $do_sort || $do_body || $do_head;
 
-    # Get existing fingerprints
-    print "Checking certs in bundle... ";
-    my $i     = 0;
-    my %fps   = ();
-    my $cfile = "/tmp/cert-$$.tmp";
-    foreach my $cert (@certs) {
-        printf "%4.4d\b\b\b\b", ++$i;
-        open CF, '>', $cfile
-            or die "*** Cannot write temp file $cfile: $!\n";
-        print CF $cert;
-        close CF;
-        my $fp = qx{openssl x509 -noout -fingerprint -in '$cfile'};
-        $fp =~ s/^.+?=//;          # trim front
-        $fp =~ s/[^0-9a-f]//ig;    # keep only hex
-        $fps{$fp} = $cert;
-        unlink $cfile;
+    # Inhale the bundle and nay new certificates
+    my $b     = q{};
+    my $bfile = $ROOT . $_[0];
+    putinfo "Loading certificates... ";
+    foreach my $file (@_) {
+        open BF, $ROOT . $file
+            or return "Cannot read file $ROOT$file : $!";
+        putloud "\n  File: $ROOT$file";
+        $b .= do {local $/ = <BF>}
+            . "\n";
+        close BF;
     }
-    say "Done";
+    putloud "\n";
+    putinfo "Done\n";
 
-    # Check new certs
-    my $nnew = 0;
-    foreach my $newfile (@_) {
-        print "Checking certificate $newfile ... ";
-        my $fp = qx{openssl x509 -noout -fingerprint -in '$newfile' 2>&1};
-        if ($?) {
-            print "ERROR\n*** Cannot process certificate $newfile\n    ";
-            say join("\n    ", split(/\n/, $fp));
-            next;
-        }
-        $fp =~ s/^.+?=//;          # trim front
-        $fp =~ s/[^0-9a-f]//ig;    # keep only hex
-        if (exists $fps{$fp}) {
-            say "Exists";
-            next;
-        }
-        ++$nnew;
-        say "New";
+    # Split into unique certs
+    #<<<
+    my $nfound = 0;
+    my %certs = map {$nfound++; $_ => {subj => q{}}} $b =~ m/(^-----BEGIN\sCERTIFICATE-----.*?$
+                                                              .+?
+                                                              ^-----END\sCERTIFICATE-----
+                                                             )/xsmg;
+    #>>>
+    my $nuniq = keys %certs;
+    $rewrite ||= $nuniq != $nfound;
+    putinfo "Found $nuniq unique certificates of $nfound loaded\n";
 
-        # It's new, add it
-        open CF, '<', $newfile
-            or die "*** Cannot read cert file $newfile: $!\n";
-        my $cert = do {local $/ = <CF>};
-        close CF;
-        $fps{$fp} = $cert;
+    # Get fingerprint, heading, or body text for certs if requested
+    my %fps = ();
+    if ($do_hash || $do_sort || $do_head || $do_body) {
+        putinfo "Analyzing certificates... ";
+        my $i    = 0;
+        my @bads = ();
+        my @dups = ();
+        my $what = q{};
+        $what .= "-fingerprint " if $do_hash;
+        $what .= "-subject "     if $do_sort || $do_head;
+        $what .= "-issuer "      if $do_head;
+        $what .= "-text "        if $do_body;
+        my $cfile = "/tmp/cert-$$.tmp";
+        foreach my $cert (keys %certs) {
+            putinfo sprintf("%4.4d\b\b\b\b", ++$i);
+            open CF, '>', $cfile
+                or return "Cannot write temp file $cfile: $!";
+            print CF $cert;
+            close CF;
+            my $info = qx{openssl x509 -noout $what -in '$cfile' 2>&1};
+            unlink $cfile;
+            if ($?) {
+                push @bads, $cert;
+                next;
+            }
+
+            # Extract requested parts from info
+            my $fp = ($info =~ m{^SHA1 Fingerprint=(.+?)$}ism)[0] || q{};
+            $fp =~ s/[^0-9a-f]//ig;    # keep only hex
+            my $subj = ($info =~ m{^subject=\s*(.+?)\s*$}ism)[0]  || q{};
+            my $issu = ($info =~ m{^issuer=\s*(.+?)\s*$}ism)[0]   || q{};
+            my $text = ($info =~ m{^Certificate:\s*$(.+)}ism)[0]  || q{};    # Grab multiple lines
+            $certs{$cert}->{fp}   = $fp;
+            $certs{$cert}->{subj} = $subj;
+            $certs{$cert}->{issu} = $issu;
+            $certs{$cert}->{text} = $text;
+
+            # Check for dups by fingerprint
+            push @dups, $cert if $fps{$fp}++ && $do_hash;
+        }
+        putinfo "Done\n";
+        if (@bads) {
+            $rewrite = 1;
+            delete @certs{@bads};
+            putinfo "Removed " . (0 + @bads) . " bad certificate(s)\n";
+        }
+        if (@dups) {
+            $rewrite = 1;
+            delete @certs{@dups};
+            putinfo "Removed " . (0 + @dups) . " more duplicate(s)\n";
+        }
     }
-    say "$nnew new certificates to add";
-    return 0 if !$nnew;
+
+    # Any changes to write?
+    if (!$rewrite) {
+        putloud "No changes written\n";
+        return q{};
+    }
 
     # Save the old bundle file
-    rename $bfile, "$bfile." . strftime('%Y-%m-%dT%H:%M:%SZ', gmtime(time()));
+    my $savename = $bfile . strftime('.%Y-%m-%dT%H:%M:%SZ', gmtime(time()));
+    rename $bfile, $savename
+        or return "Cannot rename original bundle file $bfile\n\tto $savename\n\t$!";
+    putloud "Original bundle saved as $savename\n";
 
     # Write new bundle file
     open NB, '>', $bfile
-        or die "*** Cannot write new bundle $bfile : $!\n";
-    foreach my $cert (values %fps) {
-        say NB $cert;
+        or return "Cannot write new bundle to $bfile : $!";
+#    foreach my $cert (sort {lc($certs{$a}->{subj}) 
+#                        cmp lc($certs{$b}->{subj})} keys %certs) {
+    foreach my $cert (keys %certs) {
+        if ($do_head) {
+            print NB "\n";
+            print NB "Subject: " . $certs{$cert}->{subj} . "\n";
+            print NB "Issuer:  " . $certs{$cert}->{issu} . "\n";
+        }
+        if ($do_body) {
+            print NB "\n" . ('=' x 77) . "\n";
+            print NB $certs{$cert}->{text} . "\n";
+        }
+        print NB $cert;
+        print NB "\n";
     }
-    say "Wrote " . (0 + keys(%fps)) . " certificates to bundle $bfile";
     close NB;
-    return $nnew;
+    putinfo "Wrote " . (0 + keys(%certs)) . " certificates to bundle $bfile\n";
+    return q{};
 }
 
+__END__
+
+# Keep this POD to 80 chars max so it fits in a default terminal window------>|
+
+=head1 NAME
+
+ssl-add2bundle - Add certificates to a bundle, if they're not already added.
+
+=head1 SYNOPSIS
+
+ ssl-add2bundle [options] BUNDLEFILE [NEWCERTS...]
+
+ Options:
+  -g  --fingerprint     Fingerprint each cert to test for uniqueness
+  -h  --help            Usage summary
+  -q  --quiet           Suppress output messages
+  -R  --root            Alternate filesystem root
+  -s  --sort            Sort certificates by subject
+  -x  --text            Add certificate text above each cert (overrides -t)
+  -t  --titles          Add subject and issuer titles to each cert
+  -v  --verbose         Show more output (overides -q)
+
+=head1 DESCRIPTION
+
+This utility adds new certificates to a certificate bundle.
+It checks first if the certificate is already present, and if
+not included, it then adds it to the bundle.
+
+The bundle and any new certificates must be in PEM format.
+
+The utility has the nice side-effect of cleaning up bundles.
+It removes duplicate certificates; it can sort them; and it
+can add human-readable headers to each so it's easy to view
+the bundle in a text editor.
+
+For a more exacting check of matching certificates, use
+the --fingerprint option.  This compares the SHA1 digest
+of the DER-encoded form of the certificates.  This is the
+slower option; the default is to simply compare the PEM
+formats -- as strings -- of the certificates as given in the file.
+The default may miss some duplicates; to be certain use --fingerprint.
+
+The bundle file is rewritten when new unique certificates
+are added or duplicates or bad certs are removed, or if the
+the options --sort, --text, or --titles are used.
+
+Use --root to specify an alternate filesystem root; this is
+useful for testing but otherwise not typically used.
+
+The --verbose option prints more informational messages about
+what this utility is doing; the --quiet option suppresses all
+messages.  --verbose overrides --quiet.
+
+=cut
