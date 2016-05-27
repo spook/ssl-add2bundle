@@ -61,7 +61,10 @@ pod2usage(
     -exitval => 1,
     -message => "*** Missing bundle file name\n"
 ) if !@ARGV;
-pod2usage(-verbose => 1, -exitval => 0)
+pod2usage(
+    -verbose  => $opts->{verbose} ? 99 : 1, 
+    -sections => "SYNOPSIS|DESCRIPTION",
+    -exitval  => 0)
     if $opts->{help};
 my $ROOT = $opts->{root} || q{};
 $ROOT =~ s{(?<!/)$}{/} if $ROOT;    # If root given, make sure it ends with a slash
@@ -219,7 +222,7 @@ __END__
 
 =head1 NAME
 
-ssl-add2bundle - Add certificates to a bundle, if they're not already added.
+ssl-add2bundle - Merge certificates into a bundle
 
 =head1 SYNOPSIS
 
@@ -227,7 +230,7 @@ ssl-add2bundle - Add certificates to a bundle, if they're not already added.
 
  Options:
   -g  --fingerprint     Fingerprint each cert to test for uniqueness
-  -h  --help            Usage summary
+  -h  --help            Usage summary, use -hv for more help
   -q  --quiet           Suppress output messages
   -R  --root            Alternate filesystem root
   -s  --sort            Sort certificates by subject
@@ -237,8 +240,8 @@ ssl-add2bundle - Add certificates to a bundle, if they're not already added.
 
 =head1 DESCRIPTION
 
-This utility adds new certificates to a certificate bundle.
-It checks first if the certificate is already present, and if
+This utility adds new certificates to the certificate bundle BUNDLEFILE.
+It checks first if a certificate is already present, and if
 not included, it then adds it to the bundle.
 
 The bundle and any new certificates must be in PEM format.
@@ -265,5 +268,9 @@ useful for testing but otherwise not typically used.
 The --verbose option prints more informational messages about
 what this utility is doing; the --quiet option suppresses all
 messages.  --verbose overrides --quiet.
+
+By the way... the NEWCERTS can also be bundle files.
+This utility is basically a certificate merging tool.
+
 
 =cut
